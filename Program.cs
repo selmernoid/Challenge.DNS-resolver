@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Net;
+using System.Net.Sockets;
 
 class Program
 {
@@ -25,12 +27,38 @@ class Program
         {
             Console.Write($"{b:X2} ");
         }
-        Console.WriteLine("Encoded DNS Packet:");
-        foreach (var b in encodedDnsPacket)
+        
+        var response = SendDnsRequest(encodedDnsPacket, header);
+        
+        Console.WriteLine("\nReceived DNS Response:");
+        foreach (var b in response)
         {
-            Console.Write($"{b:X2}");
+            Console.Write($"{b:X2} ");
         }
         
-        
+        // Verify the response ID
+        if (response[0] == (byte)(header.Id >> 8) && response[1] == (byte)(header.Id & 0xFF))
+        {
+            Console.WriteLine("\nResponse ID matches the request ID.");
+        }
+        else
+        {
+            Console.WriteLine("\nResponse ID does not match the request ID.");
+        }
+    }
+
+    private static byte[] SendDnsRequest(byte[] encodedDnsPacket, DnsHeader header)
+    {
+        // Create a UDP socket
+        using UdpClient udpClient = new UdpClient();
+        IPEndPoint endPoint = new IPEndPoint(IPAddress.Parse("8.8.8.8"), 53);
+
+        // Send the DNS request
+        udpClient.Send(encodedDnsPacket, encodedDnsPacket.Length, endPoint);
+
+        // Receive the response
+        var response = udpClient.Receive(ref endPoint);
+
+        return response;
     }
 }
