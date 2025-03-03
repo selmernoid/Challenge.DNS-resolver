@@ -5,9 +5,11 @@ using System.Text;
 
 public class DnsDecoder
 {
-    public static void DecodeDnsResponse(byte[] response)
+    public static DnsResult DecodeDnsResponse(byte[] response)
     {
         int index = 0;
+        var ipAddresses = new List<IPAddress>();
+        var nsServers = new List<string>();
 
         // Parse Header
         var header = new DnsHeader
@@ -24,7 +26,7 @@ public class DnsDecoder
         if ((header.Flags & 0x8000) == 0)
         {
             Console.WriteLine("QR bit is not set, this is not a response.");
-            return;
+            throw new InvalidDataException("QR bit is not set, this is not a response.");
         }
 
         // Parse Question Section
@@ -48,11 +50,64 @@ public class DnsDecoder
                 byte[] ipAddressBytes = new byte[4];
                 Array.Copy(response, index, ipAddressBytes, 0, 4);
                 IPAddress ipAddress = new IPAddress(ipAddressBytes);
+                ipAddresses.Add(ipAddress);
                 Console.WriteLine($"Answer: {answerDomain}, Type: {type}, Class: {@class}, TTL: {ttl}, IP Address: {ipAddress}");
             }
 
             index += dataLength;
         }
+
+        // Parse Authority Section
+        for (int i = 0; i < header.NSCount; i++)
+        {
+            string nsDomain = DecodeDomainName(response, ref index);
+            ushort type = (ushort)((response[index++] << 8) | response[index++]);
+            ushort @class = (ushort)((response[index++] << 8) | response[index++]);
+            uint ttl = (uint)((response[index++] << 24) | (response[index++] << 16) | (response[index++] << 8) | response[index++]);
+            ushort dataLength = (ushort)((response[index++] << 8) | response[index++]);
+
+            if (type == 2) // NS record
+            {
+                string nsName = DecodeDomainName(response, ref index);
+                Console.WriteLine($"Authority: {nsDomain}, Type: {type}, Class: {@class}, TTL: {ttl}, Name Server: {nsName}");
+                nsServers.Add(nsName);
+            }
+
+            //index += dataLength; // this offset was done at DecodeDomainName
+        }
+
+        // Parse Additional Section
+        var additionalRecords = new Dictionary<string, IPAddress>();
+        for (int i = 0; i < header.AnmCount; i++)
+        {
+            string domainName = DecodeDomainName(response, ref index);
+            ushort type = (ushort)((response[index++] << 8) | response[index++]);
+            ushort @class = (ushort)((response[index++] << 8) | response[index++]);
+            uint ttl = (uint)((response[index++] << 24) | (response[index++] << 16) | (response[index++] << 8) | response[index++]);
+            ushort dataLength = (ushort)((response[index++] << 8) | response[index++]);
+
+            if (type == 1) // A record
+            {
+                byte[] ipAddressBytes = new byte[4];
+                Array.Copy(response, index, ipAddressBytes, 0, 4);
+                IPAddress ipAddress = new IPAddress(ipAddressBytes);
+                Console.WriteLine($"Additional: {domainName}, Type: {type}, Class: {@class}, TTL: {ttl}, IP Address: {ipAddress}");
+                additionalRecords[domainName] = ipAddress;
+            }
+
+            index += dataLength;
+        }
+
+        // Check if we have NS records without corresponding A records
+        foreach (var nsServer in nsServers)
+        {
+            if (!additionalRecords.ContainsKey(nsServer))
+            {
+                Console.WriteLine($"No IP address found for Name Server: {nsServer}");
+            }
+        }
+
+        return new(ipAddresses, additionalRecords);
     }
 
     private static string DecodeDomainName(byte[] response, ref int index)
